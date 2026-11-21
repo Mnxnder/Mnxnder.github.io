@@ -1,0 +1,5 @@
+# Serve every file exactly as built. No line-ending translation, so a rebuild
+# produces a real diff only when the content actually changed.
+* -text
+*.png binary
+*.zip binary
