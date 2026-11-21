@@ -924,6 +924,368 @@ body.dexopen{overflow:hidden}
 </div>
 
 <script>
+/* =====================================================================
+   fx.js — two things, both of them everywhere in the app:
+
+   1. FX   reward effects when an answer is right. Escalating, so the
+           feedback keeps meaning something: a quick spark for a plain
+           correct, more for a streak, and a gold stamp for the rare
+           event that actually matters — a fact locking in.
+
+   2. KP   keypoint emphasis for flat factual prose. It marks only what
+           can be detected without guessing: values with units, (+)/(−)
+           results, and the handful of qualifiers that flip an exam
+           answer. It never touches text already inside <b>.
+
+   Loaded before the main script, because the Tricks and Traps tabs are
+   rendered while that script parses and they call KP as they build.
+
+   Everything animates transform and opacity only. Under
+   prefers-reduced-motion every motion is dropped and the message still
+   appears — the information is never carried by the animation alone.
+   ===================================================================== */
+(function () {
+  'use strict';
+
+  var RM = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)')
+                             : { matches: false };
+  var calm = function () { return !!RM.matches; };
+
+  /* ---------------------------------------------------------------- CSS */
+  var CSS = [
+    '.fxlayer{position:fixed;inset:0;pointer-events:none;z-index:9999;overflow:hidden;contain:strict}',
+    '.fxp{position:absolute;left:0;top:0;will-change:transform,opacity}',
+
+    /* spark: a dot thrown outwards that fades on the way */
+    '.fx-spark{width:7px;height:7px;border-radius:50%;',
+    'animation:fxspark var(--d,620ms) cubic-bezier(.18,.7,.3,1) forwards}',
+    '@keyframes fxspark{',
+    'from{transform:translate(var(--x),var(--y)) scale(.4);opacity:1}',
+    'to{transform:translate(calc(var(--x) + var(--dx)),calc(var(--y) + var(--dy))) scale(0);opacity:0}}',
+
+    /* ring: a shockwave outline */
+    '.fx-ring{border-radius:50%;border:3px solid currentColor;',
+    'animation:fxring var(--d,560ms) cubic-bezier(.16,1,.3,1) forwards}',
+    '@keyframes fxring{',
+    'from{transform:translate(var(--x),var(--y)) translate(-50%,-50%) scale(.2);opacity:.85}',
+    'to{transform:translate(var(--x),var(--y)) translate(-50%,-50%) scale(1);opacity:0}}',
+
+    /* chip: the words, rising */
+    '.fx-chip{font:700 15px/1.1 "Public Sans",system-ui,sans-serif;white-space:nowrap;',
+    'padding:6px 12px;border-radius:999px;letter-spacing:.02em;',
+    'box-shadow:0 6px 18px rgba(0,0,0,.22);',
+    'animation:fxchip var(--d,1150ms) cubic-bezier(.16,1,.3,1) forwards}',
+    '@keyframes fxchip{',
+    '0%{transform:translate(var(--x),var(--y)) translate(-50%,-50%) scale(.6);opacity:0}',
+    '18%{transform:translate(var(--x),var(--y)) translate(-50%,-50%) scale(1.08);opacity:1}',
+    '32%{transform:translate(var(--x),var(--y)) translate(-50%,-50%) scale(1)}',
+    '100%{transform:translate(var(--x),calc(var(--y) - 54px)) translate(-50%,-50%) scale(1);opacity:0}}',
+
+    /* stamp: reserved for locking a fact in */
+    '.fx-stamp{font:800 19px/1.1 "Zilla Slab",Georgia,serif;white-space:nowrap;',
+    'padding:10px 20px;border-radius:12px;border:3px solid currentColor;letter-spacing:.06em;',
+    'text-transform:uppercase;box-shadow:0 10px 30px rgba(0,0,0,.28);',
+    'animation:fxstamp 1500ms cubic-bezier(.2,1.5,.4,1) forwards}',
+    '@keyframes fxstamp{',
+    '0%{transform:translate(var(--x),var(--y)) translate(-50%,-50%) scale(2.6) rotate(-14deg);opacity:0}',
+    '14%{transform:translate(var(--x),var(--y)) translate(-50%,-50%) scale(1) rotate(-5deg);opacity:1}',
+    '70%{transform:translate(var(--x),var(--y)) translate(-50%,-50%) scale(1) rotate(-5deg);opacity:1}',
+    '100%{transform:translate(var(--x),calc(var(--y) - 26px)) translate(-50%,-50%) scale(.96) rotate(-5deg);opacity:0}}',
+
+    /* confetti: paper, not dots — it reads as celebration rather than error */
+    '.fx-conf{width:8px;height:13px;border-radius:2px;',
+    'animation:fxconf var(--d,1500ms) cubic-bezier(.3,.5,.5,1) forwards}',
+    '@keyframes fxconf{',
+    'from{transform:translate(var(--x),var(--y)) rotate(0deg);opacity:1}',
+    'to{transform:translate(calc(var(--x) + var(--dx)),calc(var(--y) + var(--dy))) rotate(var(--r,540deg));opacity:0}}',
+
+    /* the verdict badge itself gets a small spring */
+    '.fx-pop{animation:fxpop 460ms cubic-bezier(.2,1.4,.4,1)}',
+    '@keyframes fxpop{from{transform:scale(.9);opacity:.4}to{transform:scale(1);opacity:1}}',
+
+    /* a correct table cell / input */
+    '.fx-flash{animation:fxflash 760ms ease-out}',
+    '@keyframes fxflash{0%{box-shadow:0 0 0 0 var(--fxok)}100%{box-shadow:0 0 0 14px transparent}}',
+
+    /* ---- keypoint emphasis ---- */
+    /* A highlighter stroke rather than a block fill: it survives dark mode,
+       keeps the text colour intact, and does not shout over a whole line. */
+    ':root{--kp-wash:rgba(29,79,143,.20);--kp-ink:inherit;--fxok:#256b4f;--fxgold:#b8860b}',
+    '@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){',
+    '--kp-wash:rgba(127,176,232,.26);--fxok:#74c9a3;--fxgold:#f0c54a}}',
+    ':root[data-theme="dark"]{--kp-wash:rgba(127,176,232,.26);--fxok:#74c9a3;--fxgold:#f0c54a}',
+    '.kp{font-weight:600;',
+    'background:linear-gradient(transparent 62%,var(--kp-wash) 62%,var(--kp-wash) 94%,transparent 94%);',
+    'border-radius:2px;padding:0 1px}',
+    /* the graded keypoint inside an answer: stronger, it IS the answer */
+    '.fa b,.fwhy b,.why2 b,.trap p b,.sol b,.derows dd b,.leech b,.fv b{',
+    'background:var(--kp-wash);border-radius:3px;padding:.5px 3px;font-weight:700}',
+
+    '@media (prefers-reduced-motion:reduce){',
+    '.fx-chip,.fx-stamp{animation:fxcalm 1200ms linear forwards}',
+    '.fx-pop,.fx-flash{animation:none}',
+    '@keyframes fxcalm{',
+    '0%{transform:translate(var(--x),var(--y)) translate(-50%,-50%);opacity:0}',
+    '12%{opacity:1}80%{opacity:1}',
+    '100%{transform:translate(var(--x),var(--y)) translate(-50%,-50%);opacity:0}}}'
+  ].join('');
+
+  var st = document.createElement('style');
+  st.textContent = CSS;
+  (document.head || document.documentElement).appendChild(st);
+
+  /* -------------------------------------------------------------- layer */
+  var layer = null;
+  function L() {
+    if (!layer || !layer.parentNode) {
+      layer = document.createElement('div');
+      layer.className = 'fxlayer';
+      layer.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(layer);
+    }
+    return layer;
+  }
+
+  /* Anchor point: the centre of an element, in viewport coordinates. */
+  function at(el) {
+    if (!el || !el.getBoundingClientRect) {
+      return { x: innerWidth / 2, y: innerHeight / 2 };
+    }
+    var r = el.getBoundingClientRect();
+    if (!r.width && !r.height) return { x: innerWidth / 2, y: innerHeight / 2 };
+    return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 90) };
+  }
+
+  function add(cls, p, css, life) {
+    var d = document.createElement('div');
+    d.className = 'fxp ' + cls;
+    d.style.setProperty('--x', p.x + 'px');
+    d.style.setProperty('--y', p.y + 'px');
+    for (var k in css) if (css.hasOwnProperty(k)) d.style.setProperty(k, css[k]);
+    L().appendChild(d);
+    var gone = false;
+    var kill = function () { if (!gone) { gone = true; if (d.parentNode) d.parentNode.removeChild(d); } };
+    d.addEventListener('animationend', kill);
+    setTimeout(kill, (life || 1600) + 400);   /* belt and braces if the event is missed */
+    return d;
+  }
+
+  function sparks(p, n, colors, spread) {
+    if (calm()) return;
+    for (var i = 0; i < n; i++) {
+      var a = (Math.PI * 2 * i) / n + Math.random() * 0.5;
+      var dist = (spread || 70) * (0.55 + Math.random() * 0.75);
+      add('fx-spark', p, {
+        '--dx': (Math.cos(a) * dist).toFixed(1) + 'px',
+        '--dy': (Math.sin(a) * dist - 14).toFixed(1) + 'px',
+        '--d': (480 + Math.random() * 320 | 0) + 'ms',
+        'background': colors[i % colors.length],
+        'width': (5 + Math.random() * 5 | 0) + 'px',
+        'height': (5 + Math.random() * 5 | 0) + 'px'
+      }, 900);
+    }
+  }
+
+  function ring(p, color, size) {
+    if (calm()) return;
+    add('fx-ring', p, {
+      'color': color,
+      'width': (size || 120) + 'px',
+      'height': (size || 120) + 'px',
+      'margin': '0'
+    }, 700);
+  }
+
+  function chip(p, text, bg, ink) {
+    var d = add('fx-chip', p, { 'background': bg, 'color': ink || '#fff' }, 1250);
+    d.textContent = text;
+    return d;
+  }
+
+  function confetti(p, n, colors) {
+    if (calm()) return;
+    for (var i = 0; i < n; i++) {
+      var dx = (Math.random() - 0.5) * 300;
+      var dy = 120 + Math.random() * 220;
+      add('fx-conf', p, {
+        '--dx': dx.toFixed(1) + 'px',
+        '--dy': dy.toFixed(1) + 'px',
+        '--r': ((Math.random() * 1000 | 0) - 500) + 'deg',
+        '--d': (1100 + Math.random() * 700 | 0) + 'ms',
+        'background': colors[i % colors.length]
+      }, 1900);
+    }
+  }
+
+  function cssvar(name, fallback) {
+    try {
+      var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      return v || fallback;
+    } catch (e) { return fallback; }
+  }
+
+  /* ------------------------------------------------------------- the API */
+  var FX = {
+    /* The Play game. One call covers every outcome so the escalation
+       stays in one place and cannot drift between subjects. */
+    answer: function (o) {
+      o = o || {};
+      if (!o.ok) return;                       /* wrong answers stay quiet */
+      var p = at(o.el);
+      var ok = cssvar('--ok', '#256b4f');
+      var gold = cssvar('--fxgold', '#b8860b');
+      var blue = cssvar('--blue', '#1d4f8f');
+      var flask = cssvar('--flask', '#a8215b');
+      var badge = o.el && o.el.querySelector ? o.el.querySelector('.fv') : null;
+      if (badge && !calm()) { badge.classList.remove('fx-pop'); void badge.offsetWidth; badge.classList.add('fx-pop'); }
+
+      if (o.locked) {
+        /* The rarest and the only one that means the fact is actually kept. */
+        ring(p, gold, 190);
+        confetti(p, 26, [gold, ok, blue, flask, '#fff3c4']);
+        sparks(p, 14, [gold, '#fff3c4'], 105);
+        var s = add('fx-stamp', p, { 'background': gold, 'color': '#1a1200', 'border-color': '#1a1200' }, 1600);
+        s.textContent = 'Locked in ✦';
+        return;
+      }
+      var c = o.combo | 0;
+      if (c >= 10) {
+        ring(p, flask, 170); confetti(p, 16, [flask, gold, ok]);
+        sparks(p, 14, [flask, gold], 95);
+        chip(p, '×' + c + '  on fire', flask);
+      } else if (c >= 5) {
+        ring(p, blue, 140); sparks(p, 12, [blue, ok, gold], 85);
+        chip(p, '×' + c + '  streak', blue);
+      } else if (c >= 3) {
+        ring(p, ok, 120); sparks(p, 9, [ok, blue], 72);
+        chip(p, '×' + c, ok);
+      } else {
+        ring(p, ok, 104); sparks(p, 7, [ok], 62);
+        if (o.levelled) chip(p, 'Level up', ok);
+      }
+    },
+
+    /* Build tab: one correct cell. Deliberately tiny — a table has many. */
+    cell: function (el) {
+      if (!el) return;
+      if (!calm()) { el.classList.remove('fx-flash'); void el.offsetWidth; el.classList.add('fx-flash'); }
+    },
+
+    /* Build tab: the whole table correct, which is a real achievement. */
+    table: function (el) {
+      var p = at(el), gold = cssvar('--fxgold', '#b8860b'), ok = cssvar('--ok', '#256b4f');
+      ring(p, gold, 200); confetti(p, 24, [gold, ok, cssvar('--blue', '#1d4f8f')]);
+      chip(p, 'Perfect table ✦', gold, '#1a1200');
+    },
+
+    /* Calculations tab. */
+    calc: function (el, ok, streak) {
+      if (!ok) return;
+      var p = at(el), g = cssvar('--ok', '#256b4f'), gold = cssvar('--fxgold', '#b8860b');
+      ring(p, g, 118); sparks(p, streak >= 3 ? 12 : 8, [g, gold], 76);
+      if (streak >= 3) chip(p, '×' + streak + ' in a row', g);
+    },
+
+    /* Drill tab — self-rated, so keep it modest. */
+    drill: function (el) {
+      var p = at(el), g = cssvar('--ok', '#256b4f');
+      sparks(p, 6, [g], 54);
+    },
+
+    /* The Dex: catching, and the rarer shiny. */
+    dex: function (el, o) {
+      o = o || {};
+      var p = at(el), gold = cssvar('--fxgold', '#b8860b');
+      var col = o.color || cssvar('--blue', '#1d4f8f');
+      if (o.shiny) {
+        ring(p, gold, 210);
+        confetti(p, 30, [gold, '#fff3c4', col, cssvar('--flask', '#a8215b')]);
+        var s = add('fx-stamp', p, { 'background': gold, 'color': '#1a1200', 'border-color': '#1a1200' }, 1600);
+        s.textContent = 'Shiny ✦';
+      } else {
+        ring(p, col, 150); sparks(p, 12, [col, gold], 92);
+        chip(p, o.text || 'Caught!', col);
+      }
+    }
+  };
+
+  /* ================================================================ KEY */
+
+  var NUM = '\\d+(?:[.,]\\d+)?';
+  var RANGE = NUM + '(?:\\s*(?:\\u2013|\\u2014|-|to)\\s*' + NUM + ')?';
+  var UNIT = [
+    '%', '\\u00b0\\s?[CF]', '\\u00b5m', 'um\\b', 'nm', 'mm', 'cm', 'kDa',
+    'mg\\/dL', 'g\\/dL', 'mg\\/day', 'g\\/day', 'mg\\/L', 'g\\/L',
+    'U\\/L', 'U\\/g', 'IU\\/[A-Za-z]+', 'mmol\\/mol', 'mmol\\/L', 'mEq\\/L',
+    '\\u00b5mol\\/L', 'umol\\/L', 'nmol\\/L', 'pmol\\/L', 'mOsm\\/[A-Za-z]+',
+    'ng\\/mL', '\\u00b5U\\/mL', 'uU\\/mL', 'CFU\\/mL', 'mL\\/min', 'mmHg',
+    'hours?', 'hrs?', 'h\\b', 'days?', 'weeks?', 'months?', 'years?',
+    'minutes?', 'mins?', 'min\\b', 'seconds?', 'secs?', 'psi', 'atm', 'kg', 'mL', 'L\\b'
+  ].join('|');
+
+  /* The property words that decide which of a confusable pair you are looking
+     at. These carry the discrimination in a trap far more often than a number
+     does: "heat labile" against "heat stable" is the whole answer. A closed
+     list, so nothing is guessed at. */
+  var POLE = [
+    'heat[\\u2010-\\u2015 ]labile', 'heat[\\u2010-\\u2015 ]stable', 'labile', 'stable',
+    'non[\\u2010-\\u2015 ]?motile', 'motile', 'anaerobic', 'aerobic', 'facultative',
+    'microaerophilic', 'encapsulated', 'spore[\\u2010-\\u2015 ]forming',
+    'positive', 'negative', 'resistant', 'susceptible', 'sensitive',
+    'soluble', 'insoluble', 'reversible', 'irreversible', 'antigenic',
+    /* parasitology draws its contrasts from a different vocabulary: it is
+       definitive against intermediate, sexual against asexual, and so on. */
+    'definitive', 'intermediate', 'asexual', 'sexual',
+    'endoparasite', 'ectoparasite', 'biologic(?:al)?', 'mechanical',
+    'infective', 'larval',
+    /* and clinical chemistry turns on direction of change */
+    'increased', 'decreased', 'elevated'
+  ].join('|');
+
+  /* Four detectors, one pass, so matches can never overlap or nest:
+       a value with a unit   7.5% NaCl, 33–35 °C, 24 hours, 121 psi
+       a result marker       (+), (−), (±)
+       a flipping qualifier  only, except, never, always, unlike, whereas
+       a discriminator       heat labile, gram-negative, non-motile, resistant
+     Nothing else is guessed at. */
+  var RE = new RegExp(
+    '(?:\\b' + RANGE + '\\s*(?:' + UNIT + '))' +
+    '|(?:\\((?:\\+|\\u2212|-|\\u00b1|\\+\\/\\u2212)\\))' +
+    '|(?:\\b(?:only|except|never|always|unlike|whereas)\\b)' +
+    '|(?:\\b(?:' + POLE + ')\\b)',
+    'gi');
+
+  var SKIP = /^(b|strong|mark|script|style|code|kbd|input|textarea)$/i;
+
+  function emph(text, depth) {
+    if (depth > 0 || !text) return text;
+    return text.replace(RE, '<span class="kp">$&</span>');
+  }
+
+  /* Walks the string tag by tag so emphasis is only ever added to text
+     that sits outside a tag and outside an existing <b>. Adding spans
+     changes no textContent, so grading and answer-matching are untouched. */
+  function KP(html) {
+    if (html == null) return html;
+    var s = String(html);
+    if (!s) return s;
+    var out = '', last = 0, depth = 0, m;
+    var tag = /<(\/?)([a-z0-9]+)[^>]*>/gi;
+    while ((m = tag.exec(s)) !== null) {
+      out += emph(s.slice(last, m.index), depth);
+      if (SKIP.test(m[2])) depth = Math.max(0, depth + (m[1] ? -1 : 1));
+      out += m[0];
+      last = tag.lastIndex;
+    }
+    return out + emph(s.slice(last), depth);
+  }
+
+  window.FX = FX;
+  window.KP = KP;
+})();
+
+</script>
+<script>
 /* ---------------- subject ----------------
    Each subject is a separate data pack with its own saved progress. Switching
    reloads the page with the other pack; nothing is shared or overwritten. */
@@ -6443,6 +6805,7 @@ function grade(ok){
   const s=stateOf(cur[0]);
   const nb = ok ? Math.min(5,s.b+1) : 1;
   S.boxes[cur[0]]={b:nb,d:today()+INT[nb],m:(s.m||0)+(ok?0:1)};
+  if(ok && window.FX) FX.drill(elFace);
   if(!ok) queue.unshift(cur);
   save(); renderLeech(); next();
 }
@@ -6555,6 +6918,7 @@ function checkCalc(){
   const a=curCalc.a, tol=curCalc.tol!=null?curCalc.tol:Math.max(0.01,Math.abs(a)*0.005), ok=Math.abs(v-a)<=tol;
   streak = ok ? streak+1 : 0; cSt.textContent=streak;
   cV.innerHTML=`<div class="verdict ${ok?'ok':'no'}"><b>${ok?'Correct.':'Not quite — the answer is '+(+a.toFixed(3))+'.'}</b><span class="sol">${curCalc.s}</span></div>`;
+  if(window.FX) FX.calc(cV, ok, streak);
   cGo.textContent='Next problem';
 }
 cGo.addEventListener('click',checkCalc);
@@ -6773,10 +7137,11 @@ document.getElementById('tblCheck').addEventListener('click',()=>{
     const u=norm(inp.value); tot++;
     const hit = u.length>0 && keys.some(k=>u.includes(norm(k)));
     inp.classList.toggle('ok',hit); inp.classList.toggle('no',!hit);
-    if(hit) ok++;
+    if(hit){ ok++; if(window.FX) FX.cell(inp); }
     else{const s=document.createElement('span');s.className='real';s.textContent=display;inp.parentNode.appendChild(s);}
   });
   tScore.innerHTML=`${ok} of ${tot} cells correct.` + (ok===tot?' Redraw it tomorrow from memory before you trust it.':' Everything red is now in your error log territory — redo this table before the next block.');
+  if(ok===tot && window.FX) FX.table(tScore);
 });
 document.getElementById('tblClear').addEventListener('click',drawTable);
 tsel.addEventListener('change',drawTable);
@@ -6789,8 +7154,8 @@ document.getElementById('tricksBody').innerHTML = TRICKS.map(g=>`
     <div class="lbl">Remember</div>
     <div class="m">${i.m}</div>
     <div class="lbl">What it stands for</div>
-    <table class="dec"><tbody>${i.d.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</tbody></table>
-    ${WHY[i.h]?`<div class="lbl">Why it's true</div><p class="why2">${WHY[i.h]}</p>`:''}
+    <table class="dec"><tbody>${i.d.map(r=>`<tr><td>${r[0]}</td><td>${KP(r[1])}</td></tr>`).join('')}</tbody></table>
+    ${WHY[i.h]?`<div class="lbl">Why it's true</div><p class="why2">${KP(WHY[i.h])}</p>`:''}
     ${i.tip?`<p class="tip">Tip: ${i.tip}</p>`:''}
   </div></details>`).join('')}
 `).join('');
@@ -6815,10 +7180,10 @@ document.getElementById('numbersBody').addEventListener('click',e=>{
 
 /* ---------------- traps ---------------- */
 document.getElementById('trapsBody').innerHTML =
-  TRAPS.map(t=>`<div class="trap"><h4>${t[0]}</h4><p>${t[1]}</p><p class="fix">${t[2]}</p></div>`).join('')
+  TRAPS.map(t=>`<div class="trap"><h4>${t[0]}</h4><p>${KP(t[1])}</p><p class="fix">${KP(t[2])}</p></div>`).join('')
   + (PACK ? `<div class="warn"><h3>${PACK.VERIFY.length} things in your notes worth verifying</h3>
   <p style="font-size:15px;margin:8px 0 0">${PACK.verifyNote}</p>
-  <ul>${PACK.VERIFY.map(v=>'<li>'+v+'</li>').join('')}</ul></div>` : '')
+  <ul>${PACK.VERIFY.map(v=>'<li>'+KP(v)+'</li>').join('')}</ul></div>` : '')
   + (PACK ? '' : `<div class="warn"><h3>Six things in your notes worth verifying</h3>
   <p style="font-size:15px;margin:8px 0 0">These looked off when I read your pages. Check them against Bishop or your lecturer before you commit them to memory — memorising an error costs more than missing the fact.</p>
   <ul>
@@ -7344,8 +7709,8 @@ function settle(ok, note, chosen){
 
   let h='<div class="fv '+(ok?'ok':'no')+'">'+(ok?'Correct.':'Not quite.')+
         (note?'<span class="aibadge">'+note.replace(/\.$/,'')+'</span>':'')+'</div>';
-  if(!ok||it.k==='card'||it.k==='calc'||it.k==='pic') h+='<p class="fa">'+it.a+'</p>';
-  if(!ok&&it.why) h+='<p class="fwhy">'+it.why+'</p>';
+  if(!ok||it.k==='card'||it.k==='calc'||it.k==='pic') h+='<p class="fa">'+KP(it.a)+'</p>';
+  if(!ok&&it.why) h+='<p class="fwhy">'+KP(it.why)+'</p>';
   if(now&&!was) h+='<p class="flock">Locked in — it survived a second run.</p>';
   else if(ok&&m.l>=MAXL()&&m.s<SREQ()) h+='<p class="fdrop">Cleared. It locks in when you get it again in a later run.</p>';
   else if(ok) h+='<p class="fdrop">Level up: now '+G_LVLS[Math.min(MAXL()-1,m.l)].toLowerCase()+'.</p>';
@@ -7354,6 +7719,7 @@ function settle(ok, note, chosen){
   const f=$('qFeed'); f.innerHTML=h; f.hidden=false;
   $('rowAns').hidden=true; $('rowNext').hidden=false;
   $('qNext').focus();
+  if(window.FX) FX.answer({ok:ok, el:f, combo:R.combo, locked:(now&&!was), levelled:(ok&&m.l<MAXL())});
   if(!ok && chosen) whyNot(it, chosen);
 }
 
@@ -7563,7 +7929,7 @@ paintCram(); paintHome(); aiProbe();
         '<div class="btnrow"><button class="big reveal" id="deHunt">Find this ' + NOUN + '</button><button class="big" id="deClose">Close</button></div></div>';
     } else {
       if (d.tri) h += '<p class="deflavor">“' + esc(d.tri) + '”</p>';
-      h += '<dl class="derows">' + PACK.dexRows.filter(([k]) => d[k]).map(([k,l]) => '<dt>' + l + '</dt><dd>' + esc(d[k]) + '</dd>').join('') + '</dl>';
+      h += '<dl class="derows">' + PACK.dexRows.filter(([k]) => d[k]).map(([k,l]) => '<dt>' + l + '</dt><dd>' + (window.KP ? KP(esc(d[k])) : esc(d[k])) + '</dd>').join('') + '</dl>';
       if (d.cyc && d.cyc.length) h += '<h4 class="deh">' + PACK.dexChain + '</h4><ol class="evo">' + d.cyc.map(c => '<li>' + esc(c) + '</li>').join('') + '</ol>';
       h += '<div class="demaster"><span>' + (st(id).c ? 'Lv ' + (1 + p.got) : 'Not caught') + ' · <b>' + p.got + '</b> of ' + p.tot + ' facts locked in' + (s === 'shiny' ? ' · Shiny ✦' : '') + '</span>' +
         '<div class="meter"><i style="width:' + (p.tot ? p.got / p.tot * 100 : 0) + '%"></i></div></div>' +
@@ -7648,6 +8014,15 @@ paintCram(); paintHome(); aiProbe();
       S.dex[E.d.id] = Object.assign({}, prev, {s:1, n:(prev.n || 0) + 1}); S.dexStreak = 0;
     }
     save(); paintEnc();
+    /* Celebrate after the repaint, anchored on the result line, and treat a
+       brand-new entry as the bigger moment it is. */
+    if (win && window.FX) {
+      FX.dex(document.querySelector('.encres') || el('dexModalBody'), {
+        shiny: status(E.d.id) === 'shiny',
+        color: (TYPES[E.d.ty] || {}).c,
+        text: E.first ? 'New entry!' : 'Caught! +' + E.xp + ' XP'
+      });
+    }
   }
 
   /* ---------- wire up ---------- */
