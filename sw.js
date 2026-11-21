@@ -1,6 +1,6 @@
 /* MedTech Mastery offline cache. Version is the app's own hash, so a new
    build invalidates everything and the old cache is deleted on activate. */
-const V = 'mtm-1740e07af9';
+const V = 'mtm-9eb77f3173';
 const CORE = ['./', 'index.html', 'app.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {

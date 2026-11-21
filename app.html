@@ -7792,10 +7792,15 @@ function aiPaint(){
   sel.hidden=!AI.on;
   $('aiTxt').innerHTML = AI.on
     ? '<b>Local AI on.</b> Grades typed answers on meaning, and can write fresh wrong answers.'
-    : 'No local model. Everything works — typed answers are matched on keywords instead.';
+    : (AI.blocked
+        ? 'Typed answers are matched on keywords. The optional local-AI grading only works when the app runs from a file or from localhost, not over the web.'
+        : 'No local model. Everything works — typed answers are matched on keywords instead.');
 }
 
 async function aiProbe(){
+  const localOK = location.protocol !== 'https:'
+    || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  if(!localOK){ AI.on=false; AI.blocked=true; aiPaint(); return; }
   try{
     const r=await fetch(AI.url+'/api/tags');
     const j=await r.json();
